@@ -30,6 +30,7 @@ install(PROGRAMS
   scripts/test.py
   scripts/Vacuum.py
   scripts/newtest.py
+  scripts/APF.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY
