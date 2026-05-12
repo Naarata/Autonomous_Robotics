@@ -25,7 +25,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    package_name = "ele434_teamXX_2026"  # 팀 번호로 수정
+    package_name = "ele434_team01_2026"
 
 
     environment_arg = DeclareLaunchArgument(
