@@ -20,7 +20,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    package_name = "ele434_teamXX_2026"  # <-- 반드시 팀 번호로 바꾸기
+    package_name = "ele434_team01_2026"  # <-- 반드시 팀 번호로 바꾸기
 
     environment_arg = DeclareLaunchArgument(
         "environment",

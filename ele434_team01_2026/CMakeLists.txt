@@ -29,6 +29,7 @@ install(PROGRAMS
   scripts/stop_me.py
   scripts/test.py
   scripts/Vacuum.py
+  scripts/newtest.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY
