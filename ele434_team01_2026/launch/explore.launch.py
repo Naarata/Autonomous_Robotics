@@ -129,8 +129,8 @@ def generate_launch_description():
                             run_duration,
                             value_type=float,
                         ),
-                        "max_speed": 0.24,
-                        "cruise_speed": 0.22,
+                        "max_speed": 0.26,
+                        "cruise_speed": 0.26,
                         "turn_speed": 1.50,
                         "goal_tolerance": 0.15,
 
