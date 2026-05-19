@@ -74,14 +74,16 @@ class SlamExplorer(Node):
         # -------------------------------------------------
         # A* / costmap settings
         # -------------------------------------------------
-        # 이전 safe 버전보다 줄임.
-        # 너무 크게 잡으면 기둥-얇은벽 사이에서 못 빠져나감.
+        # The hard inflation radius is kept close to the previous working value.
+        # Only the soft inflation radius is increased by about 5 cm so that A*
+        # prefers paths that stay slightly farther away from walls without
+        # blocking narrow gaps between thin walls and coloured posts.
         self.robot_radius = 0.135
         self.safety_margin = 0.035
         self.inflation_radius = self.robot_radius + self.safety_margin
 
-        # Soft inflation은 path cost만 올림. 완전히 막지는 않음.
-        self.soft_inflation_radius = 0.27
+        # Previous value was 0.27 m. This is increased by 0.05 m.
+        self.soft_inflation_radius = 0.32
 
         self.replan_period = 0.75
         self.last_plan_time = 0.0
@@ -99,21 +101,27 @@ class SlamExplorer(Node):
         # -------------------------------------------------
         # LiDAR safety settings
         # -------------------------------------------------
-        # wide_min은 이제 hard stop으로 쓰지 않음.
-        # 얇은 벽/기둥 근처에서 wide sector가 측면 장애물을 보고 너무 쉽게 멈췄기 때문.
+        # Hard stop distances are only slightly increased. The main clearance
+        # improvement comes from the caution distances and side steering bias.
         self.center_emergency_distance = 0.17
         self.guard_emergency_distance = 0.20
-        self.center_stop_distance = 0.26
-        self.guard_stop_distance = 0.25
-        self.side_stop_distance = 0.10
+        self.center_stop_distance = 0.28
+        self.guard_stop_distance = 0.27
+        self.side_stop_distance = 0.12
 
-        self.center_caution_distance = 0.48
-        self.guard_caution_distance = 0.40
-        self.wide_caution_distance = 0.30
-        self.side_caution_distance = 0.17
+        # These caution thresholds are about 5 cm larger than the previous version.
+        self.center_caution_distance = 0.53
+        self.guard_caution_distance = 0.45
+        self.wide_caution_distance = 0.35
+        self.side_caution_distance = 0.22
+
+        # Desired side clearance used by the continuous side steering bias.
+        self.desired_side_clearance = 0.24
+        self.side_bias_gain = 0.32
+        self.wide_bias_gain = 0.18
 
         # ROS angular z: positive = left, negative = right.
-        # 네가 말한 대로 기본 회피 방향은 오른쪽 우선.
+        # The default escape direction is biased to the right.
         self.default_turn_direction = -1.0
 
         self.safety_until = 0.0
@@ -230,7 +238,9 @@ class SlamExplorer(Node):
         # -------------------------------------------------
         # Waypoints
         # -------------------------------------------------
-        # 1.20은 벽에서 너무 멀지도 않고 너무 위험하지도 않은 절충값.
+        # These points are slightly inside the arena perimeter. They provide
+        # coverage of the numbered outer zones without intentionally hugging
+        # the outer arena wall.
         self.waypoints = [
             (1.20, 1.20),
             (1.20, 0.40),
@@ -253,7 +263,7 @@ class SlamExplorer(Node):
         self.last_progress_time = time.time()
 
         self.get_logger().info(
-            "Gap-friendly A* slam_explorer initialised."
+            "Gap-friendly A* slam_explorer initialised with extra wall clearance."
         )
 
     # -------------------------------------------------
@@ -453,7 +463,10 @@ class SlamExplorer(Node):
                         (dist_cells - hard_cells)
                         / max(1.0, soft_cells - hard_cells)
                     )
-                    add_cost = 2.2 * max(0.0, weight)
+
+                    # The soft penalty is increased so the planned path prefers
+                    # a slightly more central line in corridors.
+                    add_cost = 2.8 * max(0.0, weight)
                     penalty[ny_valid, nx_valid] = np.maximum(
                         penalty[ny_valid, nx_valid],
                         add_cost,
@@ -518,7 +531,7 @@ class SlamExplorer(Node):
         return None
 
     # -------------------------------------------------
-    # A*
+    # A* path planning
     # -------------------------------------------------
     def astar(self, start_cell, goal_cell, max_expansions=16000):
         if self.cost_grid is None:
@@ -664,7 +677,7 @@ class SlamExplorer(Node):
         return self.path_world[-1]
 
     # -------------------------------------------------
-    # LiDAR
+    # LiDAR processing
     # -------------------------------------------------
     def get_lidar_sectors(self):
         if self.scan_data is None:
@@ -744,7 +757,7 @@ class SlamExplorer(Node):
         }
 
     # -------------------------------------------------
-    # Safety / local planning
+    # Safety and local planning
     # -------------------------------------------------
     def choose_escape_direction(
         self,
@@ -817,6 +830,33 @@ class SlamExplorer(Node):
 
         return False
 
+    def wall_clearance_bias(self, sectors):
+        bias = 0.0
+
+        side_left = sectors["side_left_min"]
+        side_right = sectors["side_right_min"]
+        wide_min = sectors["wide_min"]
+        wide_angle = sectors["wide_angle"]
+
+        if side_left < self.desired_side_clearance:
+            error = self.desired_side_clearance - side_left
+            bias -= self.side_bias_gain * (error / self.desired_side_clearance)
+
+        if side_right < self.desired_side_clearance:
+            error = self.desired_side_clearance - side_right
+            bias += self.side_bias_gain * (error / self.desired_side_clearance)
+
+        if wide_min < self.wide_caution_distance:
+            error = self.wide_caution_distance - wide_min
+            wide_push = self.wide_bias_gain * (error / self.wide_caution_distance)
+
+            if wide_angle > 0.20:
+                bias -= wide_push
+            elif wide_angle < -0.20:
+                bias += wide_push
+
+        return max(-0.35, min(0.35, bias))
+
     def fallback_local_angle(self, sectors, goal_angle_local):
         ranges = sectors["ranges"]
         angles = sectors["angles"]
@@ -850,7 +890,6 @@ class SlamExplorer(Node):
             score -= 1.8 * goal_penalty
             score -= 0.16 * abs(candidate)
 
-            # 오른쪽 회피 살짝 선호
             if candidate < -0.05:
                 score += 0.08
 
@@ -864,6 +903,8 @@ class SlamExplorer(Node):
         center = sectors["center"]
         guard_min = sectors["guard_min"]
         wide_min = sectors["wide_min"]
+        side_left_min = sectors["side_left_min"]
+        side_right_min = sectors["side_right_min"]
 
         abs_heading = abs(heading_error)
 
@@ -878,6 +919,12 @@ class SlamExplorer(Node):
 
         if abs_heading > 0.50:
             return 0.11
+
+        if side_left_min < self.side_caution_distance:
+            return 0.09
+
+        if side_right_min < self.side_caution_distance:
+            return 0.09
 
         if guard_min < self.guard_caution_distance:
             return 0.09
@@ -894,7 +941,7 @@ class SlamExplorer(Node):
         return self.cruise_speed
 
     # -------------------------------------------------
-    # Motion
+    # Motion commands
     # -------------------------------------------------
     def publish_cmd(self, linear_x: float, angular_z: float, smooth=True):
         linear_x = max(0.0, min(self.max_speed, linear_x))
@@ -1211,6 +1258,11 @@ class SlamExplorer(Node):
                     "center_stop_distance": self.center_stop_distance,
                     "guard_stop_distance": self.guard_stop_distance,
                     "side_stop_distance": self.side_stop_distance,
+                    "center_caution_distance": self.center_caution_distance,
+                    "guard_caution_distance": self.guard_caution_distance,
+                    "wide_caution_distance": self.wide_caution_distance,
+                    "side_caution_distance": self.side_caution_distance,
+                    "desired_side_clearance": self.desired_side_clearance,
                     "debug_image_scale": self.debug_image_scale,
                 },
                 "waypoints_local": [
@@ -1248,7 +1300,7 @@ class SlamExplorer(Node):
             )
 
     # -------------------------------------------------
-    # Main navigation
+    # Main navigation loop
     # -------------------------------------------------
     def navigation_control(self):
         if self.shutdown_requested:
@@ -1288,7 +1340,7 @@ class SlamExplorer(Node):
         side_right_min = sectors["side_right_min"]
 
         # -------------------------------------------------
-        # Safety-turn lock
+        # Safety turn lock
         # -------------------------------------------------
         if now < self.safety_until:
             self.state = ExplorerState.SAFETY_TURN
@@ -1300,7 +1352,7 @@ class SlamExplorer(Node):
             return
 
         # -------------------------------------------------
-        # True contact risk only
+        # Hard contact risk check
         # -------------------------------------------------
         hard_risk, reason, risk_angle = self.has_hard_contact_risk(sectors)
 
@@ -1426,7 +1478,7 @@ class SlamExplorer(Node):
             return
 
         # -------------------------------------------------
-        # A* replan
+        # A* replanning
         # -------------------------------------------------
         should_replan = (
             not self.path_world
@@ -1464,22 +1516,7 @@ class SlamExplorer(Node):
                 heading_error = wrap_angle(target_angle - robot_yaw)
 
                 angular = 1.15 * heading_error
-
-                # Side balancing. This helps reduce wall rubbing without blocking the gap.
-                if side_left_min < self.side_caution_distance:
-                    angular -= 0.18
-
-                if side_right_min < self.side_caution_distance:
-                    angular += 0.18
-
-                # If wide obstacle is only on one side, gently bias away.
-                # But do NOT stop forward motion just because wide_min is low.
-                if wide_min < self.wide_caution_distance:
-                    if wide_angle > 0.20:
-                        angular -= 0.12
-                    elif wide_angle < -0.20:
-                        angular += 0.12
-
+                angular += self.wall_clearance_bias(sectors)
                 angular = max(-1.00, min(1.00, angular))
 
                 linear = self.speed_from_clearance(
@@ -1525,19 +1562,7 @@ class SlamExplorer(Node):
             local_angle = max(-0.75, min(0.75, local_angle))
 
         angular = 1.05 * local_angle
-
-        if side_left_min < self.side_caution_distance:
-            angular -= 0.18
-
-        if side_right_min < self.side_caution_distance:
-            angular += 0.18
-
-        if wide_min < self.wide_caution_distance:
-            if wide_angle > 0.20:
-                angular -= 0.12
-            elif wide_angle < -0.20:
-                angular += 0.12
-
+        angular += self.wall_clearance_bias(sectors)
         angular = max(-1.00, min(1.00, angular))
 
         linear = self.speed_from_clearance(
