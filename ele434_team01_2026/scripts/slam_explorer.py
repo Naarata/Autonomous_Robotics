@@ -91,7 +91,7 @@ class SlamExplorer(Node):
         self.robot_radius         = 0.18
         self.safety_margin        = 0.055
         self.inflation_radius     = self.robot_radius + self.safety_margin
-        self.soft_inflation_radius= 0.35
+        self.soft_inflation_radius= 0.42
         self.replan_period        = 0.50   # was 0.75 — replan more often
         self.last_plan_time       = 0.0
         self.path_cells           = []
@@ -106,17 +106,17 @@ class SlamExplorer(Node):
         # -------------------------------------------------
         # LiDAR safety settings
         # -------------------------------------------------
-        self.center_emergency_distance = 0.17   # physical stop — unchanged
-        self.guard_emergency_distance  = 0.20   # physical stop — unchanged
+        self.center_emergency_distance = 0.20   # physical stop — unchanged
+        self.guard_emergency_distance  = 0.25   # physical stop — unchanged
         self.center_stop_distance      = 0.25   # was 0.28
         self.guard_stop_distance       = 0.28   # was 0.27
-        self.side_stop_distance        = 0.13   # was 0.12
+        self.side_stop_distance        = 0.17   # was 0.12
         self.center_caution_distance   = 0.52   # was 0.53 — less conservative
         self.guard_caution_distance    = 0.36   # was 0.45
         self.wide_caution_distance     = 0.28   # was 0.35
         self.side_caution_distance     = 0.35   # was 0.45
         self.desired_side_clearance    = 0.25   # was 0.3
-        self.diag_stop_distance        = 0.22   # diagonal whisker hard stop
+        self.diag_stop_distance        = 0.25   # diagonal whisker hard stop
         self.diag_caution_distance     = 0.50   # diagonal whisker slow-down
         self.side_bias_gain            = 0.45
         self.wide_bias_gain            = 0.3
@@ -215,7 +215,7 @@ class SlamExplorer(Node):
 
 
         # Alignment state — MUST be set before odom_callback can initialise
-        self.state         = ExplorerState.ALIGNING
+        self.state         = ExplorerState.WAITING
         self.start_yaw_rad = 0.0
         self._align_candidates = []   # rolling buffer for Hough readings
 
@@ -224,16 +224,16 @@ class SlamExplorer(Node):
         # Waypoints (arena-local frame, centred on 0,0)
         # -------------------------------------------------
         self.waypoints = [
-            ( 1.30,  1.30),
+            ( 1.50,  1.50),
             ( 1.30,  0.40),
             ( 1.30, -0.40),
-            ( 1.30, -1.30),
+            ( 1.50, -1.50),
             ( 0.40, -1.30),
             (-0.40, -1.30),
-            (-1.30, -1.30),
+            (-1.50, -1.50),
             (-1.30, -0.40),
             (-1.30,  0.40),
-            (-1.30,  1.30),
+            (-1.50,  1.50),
             (-0.40,  1.30),
             ( 0.40,  1.30),
         ]
@@ -265,8 +265,8 @@ class SlamExplorer(Node):
         if not self.initialised_odom:
             # Block initialisation until alignment is complete so that
             # start_yaw_rad is already set when we capture the offset.
-            if self.state == ExplorerState.ALIGNING:
-                return
+            # if self.state == ExplorerState.ALIGNING:
+            #     return
 
 
             self.x_offset   = pose.position.x
@@ -810,9 +810,9 @@ class SlamExplorer(Node):
             return True, "FRONT_STOP", guard_angle
         # Diagonal whisker hard stops — angled wall coming in from 45°
         if diag_left_min  < self.diag_stop_distance:
-            return True, "DIAG_LEFT",  0.70   # positive angle → turn right to avoid
+            return True, "DIAG_LEFT",  0.75   # positive angle → turn right to avoid
         if diag_right_min < self.diag_stop_distance:
-            return True, "DIAG_RIGHT", -0.70  # negative angle → turn left to avoid
+            return True, "DIAG_RIGHT", -0.75  # negative angle → turn left to avoid
         if side_left_min  < self.side_stop_distance: return True, "LEFT_SCRAPE",  1.2
         if side_right_min < self.side_stop_distance: return True, "RIGHT_SCRAPE", -1.2
         return False, "", 0.0
@@ -1145,9 +1145,9 @@ class SlamExplorer(Node):
 
 
         # ── Alignment phase ──────────────────────────────────────────
-        if self.state == ExplorerState.ALIGNING:
-            self.auto_align_robot()
-            return
+        # if self.state == ExplorerState.ALIGNING:
+        #     self.auto_align_robot()
+        #     return
 
 
         # odom is now allowed to initialise (start_yaw_rad is set)
@@ -1221,7 +1221,7 @@ class SlamExplorer(Node):
         distance_to_goal = math.hypot(local_dx, local_dy)
 
 
-        if abs(local_dx) <= 0.2 and abs(local_dy) <= 0.2:
+        if abs(local_dx) <= 0.22 and abs(local_dy) <= 0.22:
             self.get_logger().info(
                 f"Reached waypoint {self.current_waypoint + 1}/12")
             self.current_waypoint += 1
